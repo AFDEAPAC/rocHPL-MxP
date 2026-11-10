@@ -125,6 +125,24 @@ void HPLMXP_gemmTN(const int m,
 bool HPLMXP_panel_tn();
 
 template <typename T, typename U>
+void HPLMXP_gemmNN(const int m,
+                   const int n,
+                   const int k,
+                   const T   alpha,
+                   const U*  a,
+                   const int lda,
+                   const U*  b,
+                   const int ldb,
+                   const T   beta,
+                   T*        c,
+                   const int ldc);
+
+// true when HPLMXP_PANEL_TN2=1 (requires HPLMXP_PANEL_TN=1): the two diagonal-block "TRSM" GEMMs
+// also read K-contiguous fp16 operands (L: TN, U: NN)
+bool HPLMXP_panel_tn2();
+
+
+template <typename T, typename U>
 void HPLMXP_gemmNT(const int m,
                    const int n,
                    const int k,

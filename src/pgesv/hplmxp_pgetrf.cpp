@@ -67,6 +67,11 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
   // leading dimension b) so every update GEMM is op(A)=T, op(B)=N. The matrix, the fp32 factors in A and the
   // broadcast sizes are unchanged; only the panel copies and the GEMM operand layout differ.
   const bool tn = HPLMXP_panel_tn();
+  // HPLMXP_PANEL_TN2=1: the first L copy is also L^T (b x mp) and the first U copy U (b x nq), so the L "TRSM"
+  // GEMM is TN against U11^-1 and the U one NN against L11^-1. pivU then holds U11^-1 untransposed; lacpyU
+  // writes only its upper triangle, so the strict lower part is reset to zero here.
+  const bool tn2 = HPLMXP_panel_tn2();
+  if(tn2) HPLMXP_identity(b, A.pivU, ldpiv);
   auto Lp = [&](HPLMXP_T_panel<fp32_t>& P, int rb) -> fp16_t* {
     return tn ? P.L + static_cast<size_t>(rb) * b * b : Mptr(P.L, rb * b, 0, P.ldl);
   };
@@ -171,12 +176,15 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
         HIP_CHECK(hipEventRecord(LgemmEnd, computeStream));
       }
 
-      HPLMXP_lacpy(A.mp - ip1 * b,
-                   b,
-                   Mptr(Ap, ip1 * b, j * b, lda),
-                   lda,
-                   next.L,
-                   next.ldl);
+      if(tn2)
+        HPLMXP_latcpy(b, A.mp - ip1 * b, Mptr(Ap, ip1 * b, j * b, lda), lda, next.L, b);
+      else
+        HPLMXP_lacpy(A.mp - ip1 * b,
+                     b,
+                     Mptr(Ap, ip1 * b, j * b, lda),
+                     lda,
+                     next.L,
+                     next.ldl);
 
       /*recieve piv*/
       if(!icurrow) {
@@ -187,19 +195,25 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
         HPLMXP_TracingPop("D Column Bcast");
       }
 
-      HPLMXP_latcpyU(b, b, A.piv, ldpiv, A.pivU, ldpiv);
+      if(tn2) {
+        HPLMXP_lacpyU(b, b, A.piv, ldpiv, A.pivU, ldpiv);
+        HPLMXP_gemmTN(A.mp - ip1 * b, b, b, one, next.L, b, A.pivU, ldpiv, fp32_t{0.0},
+                      Mptr(Ap, ip1 * b, j * b, lda), lda);
+      } else {
+        HPLMXP_latcpyU(b, b, A.piv, ldpiv, A.pivU, ldpiv);
 
-      HPLMXP_gemmNT(A.mp - ip1 * b,
-                    b,
-                    b,
-                    one,
-                    next.L,
-                    next.ldl,
-                    A.pivU,
-                    ldpiv,
-                    fp32_t{0.0},
-                    Mptr(Ap, ip1 * b, j * b, lda),
-                    lda);
+        HPLMXP_gemmNT(A.mp - ip1 * b,
+                      b,
+                      b,
+                      one,
+                      next.L,
+                      next.ldl,
+                      A.pivU,
+                      ldpiv,
+                      fp32_t{0.0},
+                      Mptr(Ap, ip1 * b, j * b, lda),
+                      lda);
+      }
 
       if(tn)
         HPLMXP_latcpy(b, A.mp - ip1 * b, Mptr(Ap, ip1 * b, j * b, lda), lda, next.L, b);
@@ -224,12 +238,15 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
         HIP_CHECK(hipEventRecord(UgemmEnd, computeStream));
       }
 
-      HPLMXP_latcpy(A.nq - jp1 * b,
-                    b,
-                    Mptr(Ap, i * b, jp1 * b, lda),
-                    lda,
-                    next.U,
-                    next.ldu);
+      if(tn2)
+        HPLMXP_lacpy(b, A.nq - jp1 * b, Mptr(Ap, i * b, jp1 * b, lda), lda, next.U, b);
+      else
+        HPLMXP_latcpy(A.nq - jp1 * b,
+                      b,
+                      Mptr(Ap, i * b, jp1 * b, lda),
+                      lda,
+                      next.U,
+                      next.ldu);
 
       /*recieve piv*/
       if(!icurcol) {
@@ -242,17 +259,21 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
 
       HPLMXP_lacpyL(b, b, A.piv, ldpiv, A.pivL, ldpiv);
 
-      HPLMXP_gemmNT(b,
-                    A.nq - jp1 * b,
-                    b,
-                    one,
-                    A.pivL,
-                    ldpiv,
-                    next.U,
-                    next.ldu,
-                    fp32_t{0.0},
-                    Mptr(Ap, i * b, jp1 * b, lda),
-                    lda);
+      if(tn2)
+        HPLMXP_gemmNN(b, A.nq - jp1 * b, b, one, A.pivL, ldpiv, next.U, b, fp32_t{0.0},
+                      Mptr(Ap, i * b, jp1 * b, lda), lda);
+      else
+        HPLMXP_gemmNT(b,
+                      A.nq - jp1 * b,
+                      b,
+                      one,
+                      A.pivL,
+                      ldpiv,
+                      next.U,
+                      next.ldu,
+                      fp32_t{0.0},
+                      Mptr(Ap, i * b, jp1 * b, lda),
+                      lda);
 
       if(tn)
         HPLMXP_lacpy(b, A.nq - jp1 * b, Mptr(Ap, i * b, jp1 * b, lda), lda, next.U, b);
