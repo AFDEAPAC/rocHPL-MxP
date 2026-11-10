@@ -10,9 +10,9 @@
  *
  *   HPLMXP_LT_WS=<bytes>      workspace handed to hipBLASLt (default 0, as rocBLAS does)
  *   HPLMXP_LT_REQ=<n>         heuristic results requested per shape (default 1)
- *   HPLMXP_LT_TUNE=1          with REQ>1: time the candidates during the warm-up (on the
- *                             warm-up matrix, which is regenerated before the timed solve)
- *                             and keep the fastest; see HPLMXP_gemm_lt_plan
+ *   HPLMXP_LT_TUNE=1          with REQ>1: time the candidates of a geometric sample of the big
+ *                             shapes during the warm-up (on the warm-up matrix, which is
+ *                             regenerated before the timed solve) and keep the fastest
  *   HPLMXP_LT_INDEX=<i>       force hipBLASLt solution <i> for shapes with m,n >= HPLMXP_LT_MIN
  *                             (default 32768) when the library accepts it there
  *   HPLMXP_LT_VERBOSE=1       every rank prints each plan it builds
@@ -65,7 +65,8 @@ struct State {
   bool              tune = false;
   std::map<Key, Plan> plans;
   long calls = 0, fallback = 0, planFail = 0, tuned = 0, tuneSwitched = 0, forced = 0;
-  int  lastTunedIndex = -1;
+  int    lastTunedIndex = -1;
+  double lastTunedMN    = 0.0;
 } S;
 
 int rank0() {
@@ -164,7 +165,12 @@ Plan& plan_for(const Key& key, float alpha, float beta, const void* a, const voi
       ++S.forced;
     }
   } else if(S.tune && big) {
-    if(a && b && c) {
+    // Time the candidates on a geometric sample of the shapes (the first big one, then each one whose
+    // m*n has dropped below 70% of the last timed one); the others reuse the last winner when it is in
+    // their candidate list. That keeps the warm-up to about a dozen timed shapes at 1N.
+    const double mn = (double)key.m * key.n;
+    if(a && b && c && (S.lastTunedMN == 0.0 || mn < 0.7 * S.lastTunedMN)) {
+      S.lastTunedMN = mn;
       float best = time_algo(key, p, hr[0].algo, alpha, a, b, beta, c);
       int   bi   = 0;
       for(int i = 1; i < nh; ++i) {
@@ -177,7 +183,6 @@ Plan& plan_for(const Key& key, float alpha, float beta, const void* a, const voi
       if(bi) ++S.tuneSwitched;
       S.lastTunedIndex = hipblaslt_ext::getIndexFromAlgo(p.algo);
     } else if(S.lastTunedIndex > 0) {
-      // not timed (outside the warm-up): reuse the last tuned winner if it is in this shape's list
       for(int i = 0; i < nh; ++i)
         if(hipblaslt_ext::getIndexFromAlgo(hr[i].algo) == S.lastTunedIndex) p.algo = hr[i].algo;
     }
