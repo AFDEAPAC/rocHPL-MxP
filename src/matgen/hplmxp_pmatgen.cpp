@@ -332,6 +332,8 @@ void HPLMXP_Warmup(HPLMXP_T_grid&         grid,
     HPLMXP_gemmTN(LU.mp, b, b, one, LU.panels[0].L, b, LU.pivU, ldpiv, fp32_t{0.0}, Ap, lda);
     HPLMXP_gemmNN(b, LU.nq, b, one, LU.pivL, ldpiv, LU.panels[0].U, b, fp32_t{0.0}, Ap, lda);
   }
+  /* HPLMXP_GEMM_LT: plan (and optionally tune) every GEMM shape of the factorization */
+  HPLMXP_pgetrf_lt_prepare(grid, LU);
 
   fp64_t* r = LU.work;
   fp64_t* v = LU.work + b * LU.nbrow;

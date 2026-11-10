@@ -437,3 +437,50 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
     j = jp1;
   }
 }
+
+// HPLMXP_GEMM_LT: build the hipBLASLt plan of every fp16 GEMM shape HPLMXP_pgetrf will issue on this rank,
+// by walking the same block loop without computing. Called from the warm-up, so plan creation (and the
+// optional HPLMXP_LT_TUNE timing, which overwrites A.A and the panel buffers) stays out of the timed solve.
+void HPLMXP_pgetrf_lt_prepare(HPLMXP_T_grid& grid, HPLMXP_T_pmat<fp32_t>& A) {
+  if(!HPLMXP_gemm_lt_on()) return;
+  const int  b = A.nb, N = A.n, nblocks = N / b, lda = A.ld, ldpiv = b;
+  const bool tn = HPLMXP_panel_tn(), tn2 = HPLMXP_panel_tn2();
+  auto ldl = [](int mp) { return static_cast<int>((((sizeof(fp16_t) * mp + 767) / 1024) * 1024 + 256) / sizeof(fp16_t)); };
+  fp16_t* L  = A.panels[0].L;
+  fp16_t* U  = A.panels[0].U;
+  fp32_t* C  = A.A;
+  auto upd = [&](int m, int n, int ldL, int ldU) {
+    if(tn)
+      HPLMXP_gemm_lt_plan('T', 'N', m, n, b, -1.f, L, b, U, b, 1.f, C, lda);
+    else
+      HPLMXP_gemm_lt_plan('N', 'T', m, n, b, -1.f, L, ldL, U, ldU, 1.f, C, lda);
+  };
+  int i = 0, j = 0;
+  for(int k = 0; k < nblocks; ++k) {
+    const bool icurrow = (k % grid.nprow) == grid.myrow;
+    const bool icurcol = (k % grid.npcol) == grid.mycol;
+    const int  ip1 = i + (icurrow ? 1 : 0), jp1 = j + (icurcol ? 1 : 0);
+    const int  prevL = ldl(A.mp - i * b), prevU = ldl(A.nq - j * b);
+    const int  nextL = ldl(A.mp - ip1 * b), nextU = ldl(A.nq - jp1 * b);
+    const int  mrem = A.mp - ip1 * b, nrem = A.nq - jp1 * b;
+    if(icurrow && icurcol && k > 0) upd(b, b, prevL, prevU);
+    if(icurcol) {
+      if(k > 0) upd(mrem, b, prevL, prevU);
+      if(tn2)
+        HPLMXP_gemm_lt_plan('T', 'N', mrem, b, b, 1.f, L, b, A.pivU, ldpiv, 0.f, C, lda);
+      else
+        HPLMXP_gemm_lt_plan('N', 'T', mrem, b, b, 1.f, L, nextL, A.pivU, ldpiv, 0.f, C, lda);
+    }
+    if(icurrow) {
+      if(k > 0) upd(b, nrem, prevL, prevU);
+      if(tn2)
+        HPLMXP_gemm_lt_plan('N', 'N', b, nrem, b, 1.f, A.pivL, ldpiv, U, b, 0.f, C, lda);
+      else
+        HPLMXP_gemm_lt_plan('N', 'T', b, nrem, b, 1.f, A.pivL, ldpiv, U, nextU, 0.f, C, lda);
+    }
+    if(k > 0) upd(mrem, nrem, prevL, prevU);
+    i = ip1;
+    j = jp1;
+  }
+  HIP_CHECK(hipDeviceSynchronize());
+}

@@ -90,6 +90,7 @@ void HPLMXP_gemmNT(const int     m,
                    const float   beta,
                    float*        c,
                    const int     ldc) {
+  if(HPLMXP_gemm_lt('N', 'T', m, n, k, alpha, a, lda, b, ldb, beta, c, ldc)) return;
   ROCBLAS_CHECK(rocblas_gemm_ex(blas_hdl,
                                 rocblas_operation_none,
                                 rocblas_operation_transpose,
@@ -178,6 +179,7 @@ void HPLMXP_gemmTN(const int     m,
                    const float   beta,
                    float*        c,
                    const int     ldc) {
+  if(HPLMXP_gemm_lt('T', 'N', m, n, k, alpha, a, lda, b, ldb, beta, c, ldc)) return;
   ROCBLAS_CHECK(rocblas_gemm_ex(blas_hdl,
                                 rocblas_operation_transpose,
                                 rocblas_operation_none,
@@ -216,6 +218,7 @@ void HPLMXP_gemmNN(const int     m,
                    const float   beta,
                    float*        c,
                    const int     ldc) {
+  if(HPLMXP_gemm_lt('N', 'N', m, n, k, alpha, a, lda, b, ldb, beta, c, ldc)) return;
   ROCBLAS_CHECK(rocblas_gemm_ex(blas_hdl,
                                 rocblas_operation_none,
                                 rocblas_operation_none,

@@ -118,6 +118,7 @@ void HPLMXP_InitGPU(const HPLMXP_T_grid& grid) {
 }
 
 void HPLMXP_FreeGPU() {
+  HPLMXP_gemm_lt_free();
   ROCBLAS_CHECK(rocblas_destroy_handle(blas_hdl));
 
   HIP_CHECK(hipEventDestroy(getrf));

@@ -75,6 +75,10 @@ message("-- rocBLAS libraries:    ${rocblas_LIBRARIES}")
 
 get_filename_component(ROCBLAS_LIB_PATH ${rocblas_LIBRARIES} DIRECTORY)
 
+# hipBLASLt (direct GEMM path, HPLMXP_GEMM_LT)
+find_package(hipblaslt REQUIRED)
+message("-- hipBLASLt version:      ${hipblaslt_VERSION}")
+
 # rocsolver
 find_package(rocsolver REQUIRED)
 

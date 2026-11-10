@@ -71,6 +71,8 @@ void HPLMXP_pgesv(HPLMXP_T_grid&         grid,
                   HPLMXP_T_pmat<fp64_t>& A,
                   HPLMXP_T_pmat<fp32_t>& LU);
 
+void HPLMXP_pgetrf_lt_prepare(HPLMXP_T_grid& grid, HPLMXP_T_pmat<fp32_t>& A);
+
 void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
                    HPLMXP_T_palg&         algo,
                    HPLMXP_T_pmat<fp32_t>& A);

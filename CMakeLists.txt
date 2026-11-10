@@ -161,6 +161,7 @@ target_link_libraries(rochplmxp PRIVATE MPI::MPI_CXX)
 # Target link libraries
 target_link_libraries(rochplmxp PRIVATE roc::rocblas)
 target_link_libraries(rochplmxp PRIVATE roc::rocsolver)
+target_link_libraries(rochplmxp PRIVATE roc::hipblaslt)
 
 if(HPLMXP_TRACING)
   target_link_libraries(rochplmxp PRIVATE roc::roctracer)

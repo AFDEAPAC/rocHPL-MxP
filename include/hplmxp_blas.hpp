@@ -141,6 +141,15 @@ void HPLMXP_gemmNN(const int m,
 // also read K-contiguous fp16 operands (L: TN, U: NN)
 bool HPLMXP_panel_tn2();
 
+// HPLMXP_GEMM_LT=1: fp16 x fp16 -> fp32 GEMMs call hipBLASLt directly (src/blas/hplmxp_gemm_lt.cpp).
+// HPLMXP_gemm_lt returns false when the call must go through rocBLAS instead.
+bool HPLMXP_gemm_lt_on();
+bool HPLMXP_gemm_lt(char ta, char tb, int m, int n, int k, float alpha, const __half* a, int lda,
+                    const __half* b, int ldb, float beta, float* c, int ldc);
+// builds (and with HPLMXP_LT_TUNE=1 times) the plan of one shape on buffers that may be overwritten
+void HPLMXP_gemm_lt_plan(char ta, char tb, int m, int n, int k, float alpha, const __half* a, int lda,
+                         const __half* b, int ldb, float beta, float* c, int ldc);
+void HPLMXP_gemm_lt_free();
 
 template <typename T, typename U>
 void HPLMXP_gemmNT(const int m,
