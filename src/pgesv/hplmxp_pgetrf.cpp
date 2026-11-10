@@ -63,6 +63,25 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
   const fp32_t alpha = -1.0;
   const fp32_t beta  = 1.0;
 
+  // HPLMXP_PANEL_TN=1: keep the fp16 L and U panels K-contiguous (L^T is b x mp, U is b x nq, both with
+  // leading dimension b) so every update GEMM is op(A)=T, op(B)=N. The matrix, the fp32 factors in A and the
+  // broadcast sizes are unchanged; only the panel copies and the GEMM operand layout differ.
+  const bool tn = HPLMXP_panel_tn();
+  auto Lp = [&](HPLMXP_T_panel<fp32_t>& P, int rb) -> fp16_t* {
+    return tn ? P.L + static_cast<size_t>(rb) * b * b : Mptr(P.L, rb * b, 0, P.ldl);
+  };
+  auto Up = [&](HPLMXP_T_panel<fp32_t>& P, int cb) -> fp16_t* {
+    return tn ? P.U + static_cast<size_t>(cb) * b * b : Mptr(P.U, cb * b, 0, P.ldu);
+  };
+  auto ldL = [&](HPLMXP_T_panel<fp32_t>& P) { return tn ? b : P.ldl; };
+  auto ldU = [&](HPLMXP_T_panel<fp32_t>& P) { return tn ? b : P.ldu; };
+  auto upd = [&](int m, int n, const fp16_t* l, int ldl, const fp16_t* u, int ldu, fp32_t* c) {
+    if(tn)
+      HPLMXP_gemmTN(m, n, b, alpha, l, ldl, u, ldu, beta, c, lda);
+    else
+      HPLMXP_gemmNT(m, n, b, alpha, l, ldl, u, ldu, beta, c, lda);
+  };
+
   int i = 0, j = 0;
   int ip1 = i + (((1 % grid.nprow) == grid.myrow) ? 1 : 0);
   int jp1 = j + (((1 % grid.npcol) == grid.mycol) ? 1 : 0);
@@ -128,17 +147,7 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
       /* Update look-ahead */
       if(k > 0) {
         HIP_CHECK(hipEventRecord(DgemmStart, computeStream));
-        HPLMXP_gemmNT(b,
-                      b,
-                      b,
-                      alpha,
-                      prev.L,
-                      prev.ldl,
-                      prev.U,
-                      prev.ldu,
-                      beta,
-                      Mptr(Ap, i * b, j * b, lda),
-                      lda);
+        upd(b, b, prev.L, ldL(prev), prev.U, ldU(prev), Mptr(Ap, i * b, j * b, lda));
         HIP_CHECK(hipEventRecord(DgemmEnd, computeStream));
       }
 
@@ -157,17 +166,8 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
       /* gemm L */
       if(k > 0) {
         HIP_CHECK(hipEventRecord(LgemmStart, computeStream));
-        HPLMXP_gemmNT(A.mp - ip1 * b,
-                      b,
-                      b,
-                      alpha,
-                      Mptr(prev.L, (ip1 - i) * b, 0, prev.ldl),
-                      prev.ldl,
-                      prev.U,
-                      prev.ldu,
-                      beta,
-                      Mptr(Ap, ip1 * b, j * b, lda),
-                      lda);
+        upd(A.mp - ip1 * b, b, Lp(prev, ip1 - i), ldL(prev), prev.U, ldU(prev),
+            Mptr(Ap, ip1 * b, j * b, lda));
         HIP_CHECK(hipEventRecord(LgemmEnd, computeStream));
       }
 
@@ -201,12 +201,15 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
                     Mptr(Ap, ip1 * b, j * b, lda),
                     lda);
 
-      HPLMXP_lacpy(A.mp - ip1 * b,
-                   b,
-                   Mptr(Ap, ip1 * b, j * b, lda),
-                   lda,
-                   next.L,
-                   next.ldl);
+      if(tn)
+        HPLMXP_latcpy(b, A.mp - ip1 * b, Mptr(Ap, ip1 * b, j * b, lda), lda, next.L, b);
+      else
+        HPLMXP_lacpy(A.mp - ip1 * b,
+                     b,
+                     Mptr(Ap, ip1 * b, j * b, lda),
+                     lda,
+                     next.L,
+                     next.ldl);
 
       /* Record */
       HIP_CHECK(hipEventRecord(lbcast, computeStream));
@@ -216,17 +219,8 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
       /* gemm U */
       if(k > 0) {
         HIP_CHECK(hipEventRecord(UgemmStart, computeStream));
-        HPLMXP_gemmNT(b,
-                      A.nq - jp1 * b,
-                      b,
-                      alpha,
-                      prev.L,
-                      prev.ldl,
-                      Mptr(prev.U, (jp1 - j) * b, 0, prev.ldu),
-                      prev.ldu,
-                      beta,
-                      Mptr(Ap, i * b, jp1 * b, lda),
-                      lda);
+        upd(b, A.nq - jp1 * b, prev.L, ldL(prev), Up(prev, jp1 - j), ldU(prev),
+            Mptr(Ap, i * b, jp1 * b, lda));
         HIP_CHECK(hipEventRecord(UgemmEnd, computeStream));
       }
 
@@ -260,12 +254,15 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
                     Mptr(Ap, i * b, jp1 * b, lda),
                     lda);
 
-      HPLMXP_latcpy(A.nq - jp1 * b,
-                    b,
-                    Mptr(Ap, i * b, jp1 * b, lda),
-                    lda,
-                    next.U,
-                    next.ldu);
+      if(tn)
+        HPLMXP_lacpy(b, A.nq - jp1 * b, Mptr(Ap, i * b, jp1 * b, lda), lda, next.U, b);
+      else
+        HPLMXP_latcpy(A.nq - jp1 * b,
+                      b,
+                      Mptr(Ap, i * b, jp1 * b, lda),
+                      lda,
+                      next.U,
+                      next.ldu);
 
       /* Record */
       HIP_CHECK(hipEventRecord(ubcast, computeStream));
@@ -274,17 +271,8 @@ void HPLMXP_pgetrf(HPLMXP_T_grid&         grid,
     /* Trailing update */
     if(k > 0) {
       HIP_CHECK(hipEventRecord(TgemmStart, computeStream));
-      HPLMXP_gemmNT(A.mp - ip1 * b,
-                    A.nq - jp1 * b,
-                    b,
-                    alpha,
-                    Mptr(prev.L, (ip1 - i) * b, 0, prev.ldl),
-                    prev.ldl,
-                    Mptr(prev.U, (jp1 - j) * b, 0, prev.ldu),
-                    prev.ldu,
-                    beta,
-                    Mptr(Ap, ip1 * b, jp1 * b, lda),
-                    lda);
+      upd(A.mp - ip1 * b, A.nq - jp1 * b, Lp(prev, ip1 - i), ldL(prev), Up(prev, jp1 - j), ldU(prev),
+          Mptr(Ap, ip1 * b, jp1 * b, lda));
       HIP_CHECK(hipEventRecord(TgemmEnd, computeStream));
     }
 

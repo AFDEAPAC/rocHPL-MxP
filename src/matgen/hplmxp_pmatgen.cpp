@@ -320,6 +320,14 @@ void HPLMXP_Warmup(HPLMXP_T_grid&         grid,
                 Ap,
                 lda);
 
+  if(HPLMXP_panel_tn()) {
+    /* load the TN kernels the update GEMMs use; Ap is regenerated before the timed solve */
+    HPLMXP_gemmTN(b, b, b, alpha, LU.panels[0].L, b, LU.panels[0].U, b, beta, Ap, lda);
+    HPLMXP_gemmTN(LU.mp, b, b, alpha, LU.panels[0].L, b, LU.panels[0].U, b, beta, Ap, lda);
+    HPLMXP_gemmTN(b, LU.nq, b, alpha, LU.panels[0].L, b, LU.panels[0].U, b, beta, Ap, lda);
+    HPLMXP_gemmTN(LU.mp, LU.nq, b, alpha, LU.panels[0].L, b, LU.panels[0].U, b, beta, Ap, lda);
+  }
+
   fp64_t* r = LU.work;
   fp64_t* v = LU.work + b * LU.nbrow;
   fp64_t* work = LU.work + b * LU.nbrow + b * LU.nbcol;

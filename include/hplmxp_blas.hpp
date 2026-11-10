@@ -109,6 +109,22 @@ void HPLMXP_trsmL(const int m,
                   const int ldb);
 
 template <typename T, typename U>
+void HPLMXP_gemmTN(const int m,
+                   const int n,
+                   const int k,
+                   const T   alpha,
+                   const U*  a,
+                   const int lda,
+                   const U*  b,
+                   const int ldb,
+                   const T   beta,
+                   T*        c,
+                   const int ldc);
+
+// true when HPLMXP_PANEL_TN=1: fp16 panels stored K-contiguous, updates use gemmTN
+bool HPLMXP_panel_tn();
+
+template <typename T, typename U>
 void HPLMXP_gemmNT(const int m,
                    const int n,
                    const int k,
